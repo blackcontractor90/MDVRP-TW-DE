@@ -91,5 +91,5 @@ If you prefer simpler formats, implement DataLoader to accept JSON/CSV/formatted
 - Add automated tests and a CI pipeline.
 
 ## Contact
-Maintainer: blackcontractor90 (GitHub)
+Maintainer: blackcontractor90 (https://www.linkedin.com/in/farid-morsidi-372083141/)
 ---
