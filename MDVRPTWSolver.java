@@ -22,7 +22,7 @@ import java.util.*;
 /**
  * ${user}blackcontractor@farid
  */
-public class MDVRPTWSolver extends Application {
+public class MDVRPTWSolver extends Application implements SolverContext{
 
     private BorderPane root;
     private CanvasPane canvasPane;
@@ -35,20 +35,34 @@ public class MDVRPTWSolver extends Application {
     private RoutingSolver solver;
 
     // Problem Data
-    private List<Depot> depots = new ArrayList<>();
+    List<Depot> depots = new ArrayList<>();
     List<Customer> customers = new ArrayList<>();
     private List<Route> solutionRoutes = new ArrayList<>();
 
     // Algorithm Parameters
     private int populationSize = 50;
+    // Tracks which dataset file is currently loaded, so runs can be logged against
+    // the actual instance that produced them instead of relying on the order runs
+    // happened to be executed in (previously there was no such link at all).
+    String currentDatasetName = "unknown";
     private double crossoverRate = 0.9;
     private double scalingFactor = 0.8;
     private int maxGenerations = 200;
     private int vehicleCapacity = 200;
     double penaltyWeight = 1000;
+    // Preserves the user-configured starting penalty weight, separate from
+    // `penaltyWeight` above which DifferentialEvolution mutates live during an
+    // adaptive-penalty run. Without this, an escalated/decayed penaltyWeight left
+    // over from one run silently became the starting point for the NEXT run too -
+    // even a non-adaptive one - since solver.penaltyWeight is shared, long-lived
+    // state across every Run click in a session.
+    double basePenaltyWeight = 1000;
     double bestFitness = Double.MAX_VALUE;
 
     private boolean enableRelocationLocalSearch = true;
+    private boolean enableLNS = true;
+    private boolean enableTabu = true;
+    private boolean enableAdaptivePenalty = true;
 
     // Visualization settings
     private boolean showDepotLabels = true;
@@ -123,6 +137,22 @@ public class MDVRPTWSolver extends Application {
         relocationCheck.setSelected(enableRelocationLocalSearch);
         relocationCheck.selectedProperty().addListener((obs, oldVal, newVal) -> enableRelocationLocalSearch = newVal);
 
+        Label ablationLabel = new Label("Algorithm Components (for ablation runs):");
+        ablationLabel.setFont(Font.font("Arial", 12));
+        ablationLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #2c3e50;");
+
+        CheckBox lnsCheck = new CheckBox("Enable Large Neighborhood Search (LNS)");
+        lnsCheck.setSelected(enableLNS);
+        lnsCheck.selectedProperty().addListener((obs, oldVal, newVal) -> enableLNS = newVal);
+
+        CheckBox tabuCheck = new CheckBox("Enable Tabu Memory");
+        tabuCheck.setSelected(enableTabu);
+        tabuCheck.selectedProperty().addListener((obs, oldVal, newVal) -> enableTabu = newVal);
+
+        CheckBox adaptivePenaltyCheck = new CheckBox("Enable Adaptive Penalty");
+        adaptivePenaltyCheck.setSelected(enableAdaptivePenalty);
+        adaptivePenaltyCheck.selectedProperty().addListener((obs, oldVal, newVal) -> enableAdaptivePenalty = newVal);
+
         Button runButton = new Button("Run Differential Evolution");
         runButton.setStyle("-fx-background-color: #3498db; -fx-text-fill: white; -fx-font-weight: bold;");
         runButton.setMaxWidth(Double.MAX_VALUE);
@@ -185,13 +215,20 @@ public class MDVRPTWSolver extends Application {
                 timeWindowStatsLabel,
                 new Separator(),
                 paramLabel,
-                popSizeSpinner,
-                crSpinner,
-                fSpinner,
-                genSpinner,
-                capacitySpinner,
-                penaltySpinner,
+                // Note: the six parameter spinners (population size, CR, F, generations,
+                // capacity, penalty) are intentionally NOT re-added here. createSpinner()
+                // already adds each one to controlPanel, wrapped together with its label,
+                // at the point it's created. Re-adding the bare spinner here (as the old
+                // code did) doesn't duplicate it - a JavaFX node can only have one parent -
+                // it silently rips the spinner back out of its labeled container and
+                // reparents it bare at this position instead, detaching it from its label.
                 relocationCheck,
+                new Separator(),
+                ablationLabel,
+                lnsCheck,
+                tabuCheck,
+                adaptivePenaltyCheck,
+                new Separator(),
                 runButton,
                 analyzeButton,
                 new Separator(),
@@ -201,14 +238,21 @@ public class MDVRPTWSolver extends Application {
                 routeLabelCheck,
                 timeWindowCheck
         );
-        root.setRight(controlPanel);
+        ScrollPane controlScrollPane = new ScrollPane(controlPanel);
+        controlScrollPane.setFitToWidth(true);
+        controlScrollPane.setPrefWidth(370);
+        controlScrollPane.setStyle("-fx-background-color: transparent;");
+        root.setRight(controlScrollPane);
 
         popSizeSpinner.getValueFactory().valueProperty().addListener((obs, oldVal, newVal) -> populationSize = newVal);
         crSpinner.getValueFactory().valueProperty().addListener((obs, oldVal, newVal) -> crossoverRate = newVal);
         fSpinner.getValueFactory().valueProperty().addListener((obs, oldVal, newVal) -> scalingFactor = newVal);
         genSpinner.getValueFactory().valueProperty().addListener((obs, oldVal, newVal) -> maxGenerations = newVal);
         capacitySpinner.getValueFactory().valueProperty().addListener((obs, oldVal, newVal) -> vehicleCapacity = newVal);
-        penaltySpinner.getValueFactory().valueProperty().addListener((obs, oldVal, newVal) -> penaltyWeight = newVal);
+        penaltySpinner.getValueFactory().valueProperty().addListener((obs, oldVal, newVal) -> {
+            penaltyWeight = newVal;
+            basePenaltyWeight = newVal;
+        });
     }
 
     private Spinner createSpinner(double min, double max, double initial, double step, String label) {
@@ -452,33 +496,17 @@ public class MDVRPTWSolver extends Application {
 
         if (file != null) {
             resetProblem(); // clear any existing data
-            boolean loaded = false;
 
-            // Try loading with DataLoader (for simple/structured text files)
             try {
-                DataLoader loader = new DataLoader();
-                loader.loadData(file.getAbsolutePath());
-                depots = loader.depots;
-                customers = loader.customers;
-                vehicleCapacity = loader.vehicleCapacity;
-                loaded = true;
-                log("Successfully loaded using DataLoader.");
-            } catch (Exception e) {
-                log("DataLoader failed: " + e.getMessage());
-            }
+                // Bug fix: this used to try DataLoader.loadData() first and only fall
+                // back to parseCordeauFile() if DataLoader threw. DataLoader's format
+                // assumption (7 Solomon-style columns) doesn't throw on real Cordeau/
+                // Vidal MDVRPTW files - it just silently misreads the time-window
+                // columns - so the correct Cordeau-aware parser below was never
+                // actually reached for any real instance file. parseCordeauFile() is
+                // now the only loader.
+                parseCordeauFile(file);
 
-            // Try fallback Cordeau-style parser
-            if (!loaded) {
-                try {
-                    parseCordeauFile(file);
-                    loaded = true;
-                    log("Successfully loaded using parseCordeauFile.");
-                } catch (IOException e) {
-                    log("Cordeau parser failed: " + e.getMessage());
-                }
-            }
-
-            if (loaded) {
                 canvasPane.setDepots(depots);
                 canvasPane.setCustomers(customers);
                 canvasPane.draw();
@@ -487,10 +515,11 @@ public class MDVRPTWSolver extends Application {
                 solver.setCustomers(customers);
                 solver.solve();
 
+                currentDatasetName = file.getName();
                 log("Loaded dataset: " + file.getName());
                 log("Depots: " + depots.size() + ", Customers: " + customers.size());
-            } else {
-                log("Failed to load dataset: unsupported or malformed file.");
+            } catch (IOException e) {
+                log("Failed to load dataset: " + e.getMessage());
             }
         }
     }
@@ -560,19 +589,34 @@ public class MDVRPTWSolver extends Application {
             String[] headerTokens = headerLine.split("\\s+");
 
             if (headerTokens.length < 4)
-                throw new IOException("Header must include: [totalVehicles depots customers vehicleCapacity]");
+                throw new IOException("Header must include: [type vehiclesPerDepot customers depots]");
 
-            int totalVehicles = Integer.parseInt(headerTokens[0]);
-            int depotCount = Integer.parseInt(headerTokens[1]);
+            // Bug fix (round 3): the previous depotCount/vehiclesPerDepot positions
+            // (headerTokens[1] / headerTokens[3]) were tuned against this project's old
+            // local p01/p02 files, which turned out to be non-standard/corrupted data
+            // unrelated to any real published benchmark (see project notes). The actual
+            // Cordeau/Vidal spec is "type m n t" in that literal order: m = vehicles per
+            // depot, n = customer count, t = depot count LAST. For pr11a ("6 10 360 4"),
+            // t=4 depots - reading position 1 as depotCount (10) instead overran into
+            // the customer rows trying to read 10 "D Q" lines that don't exist.
+            int vehiclesPerDepot = Integer.parseInt(headerTokens[1]);
             int customerCount = Integer.parseInt(headerTokens[2]);
-            vehicleCapacity = Integer.parseInt(headerTokens[3]);
+            int depotCount = Integer.parseInt(headerTokens[3]);
 
-            // Skip depot time window lines (usually 1 per depot)
+            double[] depotDuration = new double[depotCount];
+            int[] depotCapacity = new int[depotCount];
             for (int i = 0; i < depotCount; i++) {
                 if (!scanner.hasNextLine())
-                    throw new IOException("Missing depot time window line at line " + (i + 2));
-                scanner.nextLine();
+                    throw new IOException("Missing depot duration/capacity line at line " + (i + 2));
+                String line = scanner.nextLine().trim();
+                String[] tokens = line.split("\\s+");
+                if (tokens.length < 2)
+                    throw new IOException("Malformed depot duration/capacity line (expected: D Q): " + line);
+                double duration = Double.parseDouble(tokens[0]);
+                depotDuration[i] = (duration == 0) ? 9999.0 : duration;
+                depotCapacity[i] = Integer.parseInt(tokens[1]);
             }
+            vehicleCapacity = depotCapacity.length > 0 ? depotCapacity[0] : vehicleCapacity;
 
             // Load customers
             for (int i = 0; i < customerCount; i++) {
@@ -591,8 +635,21 @@ public class MDVRPTWSolver extends Application {
                 double serviceTime = Double.parseDouble(tokens[3]);
                 int demand = Integer.parseInt(tokens[4]);
 
-                double readyTime = tokens.length > 5 ? Double.parseDouble(tokens[5]) : 0;
-                double dueTime = tokens.length > 6 ? Double.parseDouble(tokens[6]) : 1000;
+                // Bug fix: tokens[5]/tokens[6] are NOT the time window. Cordeau/Vidal's
+                // customer line is "i x y d q f a list e l" - after id/x/y/d/q (indices
+                // 0-4) comes f (visit frequency), a (number of possible visit
+                // combinations), then `a` more tokens for the combination list itself,
+                // and only THEN e/l (the actual time window) as the LAST two tokens on
+                // the line. Reading tokens[5]/tokens[6] directly (the previous "fix")
+                // grabs f/a instead - "1"/"1" for standard instances - not the real
+                // window. Reading the last two tokens is correct regardless of how many
+                // combination-list tokens sit in between.
+                double readyTime = 0;
+                double dueTime = 1000;
+                if (tokens.length >= 7) {
+                    readyTime = Double.parseDouble(tokens[tokens.length - 2]);
+                    dueTime = Double.parseDouble(tokens[tokens.length - 1]);
+                }
 
                 customers.add(new Customer(x, y, "C" + id, demand, readyTime, dueTime, serviceTime));
             }
@@ -603,23 +660,34 @@ public class MDVRPTWSolver extends Application {
                     throw new IOException("Missing depot coordinate at line " + (i + 2 + depotCount + customerCount));
 
                 String line = scanner.nextLine().trim();
+                if (line.isEmpty()) {
+                    i--;
+                    continue;
+                }
                 String[] tokens = line.split("\\s+");
 
                 if (tokens.length < 2)
-                    throw new IOException("Malformed depot line (expected x y): " + line);
+                    throw new IOException("Malformed depot line (expected coordinates): " + line);
 
-                double x = Double.parseDouble(tokens[0]);
-                double y = Double.parseDouble(tokens[1]);
+                double x, y;
+                if (tokens.length >= 3) {
+                    x = Double.parseDouble(tokens[1]);
+                    y = Double.parseDouble(tokens[2]);
+                } else {
+                    x = Double.parseDouble(tokens[0]);
+                    y = Double.parseDouble(tokens[1]);
+                }
 
                 Depot depot = new Depot(x, y, "D" + (i + 1));
-                depot.maxVehicles = totalVehicles;
-                depot.vehicleCapacity = vehicleCapacity;
+                depot.maxVehicles = vehiclesPerDepot;
+                depot.vehicleCapacity = depotCapacity[i];
+                depot.maxDuration = depotDuration[i];
 
                 depots.add(depot);
             }
 
             log("Cordeau-compatible file loaded: " + file.getName());
-            log("Vehicle capacity: " + vehicleCapacity);
+            log("Vehicles per depot: " + vehiclesPerDepot + ", Vehicle capacity: " + vehicleCapacity);
             log("Depots: " + depots.size() + ", Customers: " + customers.size());
 
         } catch (NumberFormatException e) {
@@ -670,7 +738,8 @@ public class MDVRPTWSolver extends Application {
             try {
                 String runId = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
                 DifferentialEvolution de = new DifferentialEvolution(
-                        this, populationSize, scalingFactor, crossoverRate, maxGenerations
+                        this, populationSize, scalingFactor, crossoverRate, maxGenerations,
+                        enableLNS, enableTabu, enableAdaptivePenalty
                 );
                 de.setConvergenceSeries(convergenceSeries);
 
@@ -681,10 +750,15 @@ public class MDVRPTWSolver extends Application {
                     routeRelocationLocalSearch(bestSolution);
                 }
 
-                SolutionMetrics.saveRunToCSV(
-                        bestSolution, "DifferentialEvolution", populationSize, maxGenerations,
-                        scalingFactor, crossoverRate, runId
-                );
+                // Note: DifferentialEvolution.run() already saves this result to CSV
+                // under a label reflecting which mechanisms actually ran (e.g.
+                // "DE+LNS+Tabu+Adaptive" or plain "DE" if all three are disabled).
+                // A second save used to happen here under the hardcoded label
+                // "DifferentialEvolution" - since it saved the exact same
+                // bestSolution object, every run was logged twice under two
+                // different algorithm names, making Table-1-style comparisons
+                // between "DE" and "DE+LNS+Tabu+Adaptive" compare a run against
+                // itself rather than two independently executed variants.
 
                 Platform.runLater(() -> {
                     solutionRoutes = bestSolution.routes;
@@ -765,7 +839,7 @@ public class MDVRPTWSolver extends Application {
     }
 
     // Evaluate a solution (sets routes, fitness, and penalty)
-    void evaluateSolution(Solution solution) {
+    public void evaluateSolution(Solution solution) {
         solution.routes = decodeSolution(solution);
         solution.totalDistance = 0;
         solution.totalPenalty = 0;
@@ -780,7 +854,7 @@ public class MDVRPTWSolver extends Application {
     }
 
     // Decode chromosome into actual routes
-    List<Route> decodeSolution(Solution solution) {
+    public List<Route> decodeSolution(Solution solution) {
         List<Route> routes = new ArrayList<>();
         int colorIndex = 0;
 
@@ -788,6 +862,26 @@ public class MDVRPTWSolver extends Application {
             if (customer.assignedDepotId <= 0) {
                 Depot nearest = findNearestDepot(customer);
                 customer.assignedDepotId = depots.indexOf(nearest) + 1;
+            }
+        }
+
+        // Performance fix: the old version rebuilt "sortedCustomers" per depot by
+        // scanning the *entire* chromosome and calling List.contains() twice per
+        // gene (once against depotCustList, once against sortedCustomers itself).
+        // That's O(n) work per gene, per depot -> O(depots * n^2) for one decode
+        // call. Since decode is called once per individual per generation, and
+        // again per candidate insertion inside LNS local search, this was almost
+        // certainly the single biggest cost in the whole algorithm.
+        //
+        // Fix: precompute each customer's chromosome position once (O(n)), then
+        // just sort each depot's customer bucket by that precomputed position
+        // (O(m log m) per depot, O(n log n) total).
+        int n = customers.size();
+        Map<Customer, Integer> chromosomePosition = new IdentityHashMap<>(n);
+        for (int pos = 0; pos < solution.chromosome.length; pos++) {
+            int gene = solution.chromosome[pos];
+            if (gene >= 0 && gene < n) {
+                chromosomePosition.put(customers.get(gene), pos);
             }
         }
 
@@ -805,13 +899,10 @@ public class MDVRPTWSolver extends Application {
             List<Customer> depotCustList = depotCustomers.get(depot);
             if (depotCustList.isEmpty()) continue;
 
-            List<Customer> sortedCustomers = new ArrayList<>();
-            for (int gene : solution.chromosome) {
-                if (gene < 0 || gene >= customers.size()) continue;
-                Customer cust = customers.get(gene);
-                if (depotCustList.contains(cust) && !sortedCustomers.contains(cust))
-                    sortedCustomers.add(cust);
-            }
+            List<Customer> sortedCustomers = new ArrayList<>(depotCustList);
+            sortedCustomers.sort(Comparator.comparingInt(
+                    c -> chromosomePosition.getOrDefault(c, Integer.MAX_VALUE)));
+
             List<Route> depotRoutes = createRoutesForDepot(depot, sortedCustomers);
             for (Route route : depotRoutes) {
                 route.color = routeColors[colorIndex % routeColors.length];
@@ -879,10 +970,11 @@ public class MDVRPTWSolver extends Application {
         route.timeWindowViolations = violations;
     }
 
-    private double distance(Customer prev, Depot depot) {
-		// TODO Auto-generated method stub
-		return 0;
-	}
+    private double distance(Customer customer, Depot depot) {
+        double dx = customer.x - depot.x;
+        double dy = customer.y - depot.y;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
 
 	private Depot findNearestDepot(Customer customer) {
         Depot nearest = depots.get(0);
@@ -1002,4 +1094,77 @@ public class MDVRPTWSolver extends Application {
 		// TODO Auto-generated method stub
 		return null;
 	}
+	
+	// New helper for LNS performance fix: evaluates just ONE depot's routes for a
+	// given customer ordering, without touching any other depot. A customer's
+	// depot assignment is fixed and purely geometric (set once in decodeSolution
+	// and never changed), so moving a customer within its own depot's ordering
+	// can never affect any other depot's routes - this lets LNS avoid a full
+	// 4-depot re-decode for every candidate insertion position.
+	public double[] evaluateDepotOnly(Depot depot, List<Customer> orderedCustomers) {
+	    List<Route> depotRoutes = createRoutesForDepot(depot, orderedCustomers);
+	    double totalDistance = 0;
+	    int totalViolations = 0;
+	    for (Route route : depotRoutes) {
+	        evaluateRoute(route);
+	        totalDistance += route.distance;
+	        totalViolations += route.timeWindowViolations;
+	    }
+	    return new double[]{totalDistance, totalViolations};
+	}
+
+	@Override
+	public List<Depot> getDepots() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public List<Customer> getCustomers() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public double getPenaltyWeight() {
+		// TODO Auto-generated method stub
+		return 0;
+	}
+
+	@Override
+	public void setPenaltyWeight(double weight) {
+		// TODO Auto-generated method stub
+		
+	}
+
+	@Override
+	public double getBasePenaltyWeight() {
+		// TODO Auto-generated method stub
+		return 0;
+	}
+
+	@Override
+	public void setBasePenaltyWeight(double weight) {
+		// TODO Auto-generated method stub
+		
+	}
+
+	@Override
+	public double getBestFitness() {
+		// TODO Auto-generated method stub
+		return 0;
+	}
+
+	@Override
+	public void setBestFitness(double fitness) {
+		// TODO Auto-generated method stub
+		
+	}
+
+	@Override
+	public String getCurrentDatasetName() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
 }

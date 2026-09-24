@@ -11,17 +11,19 @@ public class SolutionMetrics {
     private static final String SUMMARY_FILE = OUTPUT_DIR + "/summary.csv";
     private static final String CUMULATIVE_PREFIX = "summary_all";
 
-    public static void saveRunToCSV(Solution solution, String algorithm, int populationSize, int generations, double F, double CR) {
+    public static void saveRunToCSV(Solution solution, String algorithm, int populationSize, int generations,
+                                    double F, double CR, String datasetName) {
         try {
             Files.createDirectories(Paths.get(OUTPUT_DIR));
 
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String safeDataset = (datasetName == null || datasetName.isBlank()) ? "unknown" : datasetName;
             String filename = OUTPUT_DIR + "/run_" + timestamp + ".csv";
 
             try (PrintWriter out = new PrintWriter(filename)) {
-                out.println("Algorithm,PopulationSize,Generations,F,CR,Fitness,Distance,Penalty,TWViolations,Feasible");
-                out.printf("%s,%d,%d,%.2f,%.2f,%.4f,%.4f,%.4f,%d,%s%n",
-                        algorithm, populationSize, generations, F, CR,
+                out.println("Dataset,Algorithm,PopulationSize,Generations,F,CR,Fitness,Distance,Penalty,TWViolations,Feasible");
+                out.printf("%s,%s,%d,%d,%.2f,%.2f,%.4f,%.4f,%.4f,%d,%s%n",
+                        safeDataset, algorithm, populationSize, generations, F, CR,
                         solution.fitness, solution.totalDistance,
                         solution.totalPenalty, solution.timeWindowViolations,
                         solution.isFeasible());
@@ -33,10 +35,10 @@ public class SolutionMetrics {
 
             try (PrintWriter out = new PrintWriter(new FileWriter(SUMMARY_FILE, true))) {
                 if (writeHeader) {
-                    out.println("Algorithm,PopulationSize,Generations,F,CR,Fitness,Distance,Penalty,TWViolations,Feasible,Timestamp");
+                    out.println("Dataset,Algorithm,PopulationSize,Generations,F,CR,Fitness,Distance,Penalty,TWViolations,Feasible,Timestamp");
                 }
-                out.printf("%s,%d,%d,%.2f,%.2f,%.4f,%.4f,%.4f,%d,%s,%s%n",
-                        algorithm, populationSize, generations, F, CR,
+                out.printf("%s,%s,%d,%d,%.2f,%.2f,%.4f,%.4f,%.4f,%d,%s,%s%n",
+                        safeDataset, algorithm, populationSize, generations, F, CR,
                         solution.fitness, solution.totalDistance,
                         solution.totalPenalty, solution.timeWindowViolations,
                         solution.isFeasible(), timestamp);
@@ -45,9 +47,9 @@ public class SolutionMetrics {
             // Append to incrementally named summary_all_###.csv
             File cumulativeFile = findNextAvailableCumulativeFile();
             try (PrintWriter out = new PrintWriter(new FileWriter(cumulativeFile, false))) {
-                out.println("Algorithm,PopulationSize,Generations,F,CR,Fitness,Distance,Penalty,TWViolations,Feasible,Timestamp");
-                out.printf("%s,%d,%d,%.2f,%.2f,%.4f,%.4f,%.4f,%d,%s,%s%n",
-                        algorithm, populationSize, generations, F, CR,
+                out.println("Dataset,Algorithm,PopulationSize,Generations,F,CR,Fitness,Distance,Penalty,TWViolations,Feasible,Timestamp");
+                out.printf("%s,%s,%d,%d,%.2f,%.2f,%.4f,%.4f,%.4f,%d,%s,%s%n",
+                        safeDataset, algorithm, populationSize, generations, F, CR,
                         solution.fitness, solution.totalDistance,
                         solution.totalPenalty, solution.timeWindowViolations,
                         solution.isFeasible(), timestamp);
@@ -70,11 +72,5 @@ public class SolutionMetrics {
         String fallbackName = String.format("%s/%s_backup_%s.csv", OUTPUT_DIR, CUMULATIVE_PREFIX,
                 LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")));
         return new File(fallbackName);
-    }
-
-    public static void saveRunToCSV(Solution bestSolution, String algorithm, int populationSize, int maxGenerations,
-                                    double scalingFactor, double crossoverRate, String runId) {
-        // Optional overload for custom tracking (e.g. by runId)
-        saveRunToCSV(bestSolution, algorithm, populationSize, maxGenerations, scalingFactor, crossoverRate);
     }
 }

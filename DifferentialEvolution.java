@@ -6,7 +6,7 @@ import java.util.*;
  * ${user}blackcontractor@farid
  */
 public class DifferentialEvolution {
-    private final MDVRPTWSolver solver;
+    private final SolverContext solver;
     private final int populationSize;
     private final int maxGenerations;
     private double F;
@@ -29,19 +29,40 @@ public class DifferentialEvolution {
     private final int TABU_TENURE = 15;
     private final Set<String> tabuList = new LinkedHashSet<>();
 
+    private final boolean enableLNS;
+    private final boolean enableTabu;
+    private final boolean enableAdaptivePenalty;
+
     private XYChart.Series<Number, Number> convergenceSeries;
 
     // Adaptive parameter memories
     private final List<Double> successfulFs = new ArrayList<>();
     private final List<Double> successfulCRs = new ArrayList<>();
 
-    public DifferentialEvolution(MDVRPTWSolver solver, int populationSize,
-                                 double F, double CR, int maxGenerations) {
+    /**
+     * Full constructor. Use this to run a specific ablation variant
+     * (e.g. plain DE with all three flags false, for a true baseline).
+     */
+    public DifferentialEvolution(SolverContext solver, int populationSize,
+                                 double F, double CR, int maxGenerations,
+                                 boolean enableLNS, boolean enableTabu, boolean enableAdaptivePenalty) {
         this.solver = solver;
         this.populationSize = populationSize;
         this.F = F;
         this.CR = CR;
         this.maxGenerations = maxGenerations;
+        this.enableLNS = enableLNS;
+        this.enableTabu = enableTabu;
+        this.enableAdaptivePenalty = enableAdaptivePenalty;
+    }
+
+    /**
+     * Backward-compatible constructor - defaults to the full HADE-LNS-Tabu variant
+     * (all mechanisms enabled), matching the previous hardcoded behavior.
+     */
+    public DifferentialEvolution(SolverContext solver, int populationSize,
+                                 double F, double CR, int maxGenerations) {
+        this(solver, populationSize, F, CR, maxGenerations, true, true, true);
     }
 
     public void setConvergenceSeries(XYChart.Series<Number, Number> series) {
@@ -49,8 +70,10 @@ public class DifferentialEvolution {
     }
 
     public Solution run() {
-        initialPenaltyWeight = solver.penaltyWeight;
+        initialPenaltyWeight = solver.getBasePenaltyWeight();
+        solver.setPenaltyWeight(initialPenaltyWeight);
         currentPenaltyWeight = initialPenaltyWeight;
+        log("Running variant: " + algorithmLabel());
 
         List<Solution> population = new ArrayList<>();
         for (int i = 0; i < populationSize; i++) {
@@ -60,10 +83,10 @@ public class DifferentialEvolution {
         }
 
         Solution bestSolution = findBestSolution(population);
-        solver.bestFitness = bestSolution.fitness;
+        solver.setBestFitness(bestSolution.fitness);
 
         for (int gen = 0; gen < maxGenerations; gen++) {
-            if (gen % 10 == 0) {
+            if (enableAdaptivePenalty && gen % 10 == 0) {
                 adjustPenaltyWeight(population);
             }
 
@@ -81,17 +104,19 @@ public class DifferentialEvolution {
                 Solution trial = new Solution(trialChrom);
                 evaluateSolution(trial);
 
-                lnsLocalSearch(trial);
-                evaluateSolution(trial);
+                if (enableLNS) {
+                    lnsLocalSearch(trial);
+                    evaluateSolution(trial);
+                }
 
                 if (shouldAccept(trial, target)) {
                     newPopulation.add(trial);
                     successfulFs.add(localF);
                     successfulCRs.add(localCR);
-                    if (trial.fitness < bestSolution.fitness && !isTabu(trial)) {
+                    if (trial.fitness < bestSolution.fitness && (!enableTabu || !isTabu(trial))) {
                         bestSolution = new Solution(trial);
-                        solver.bestFitness = bestSolution.fitness;
-                        addToTabuList(trial);
+                        solver.setBestFitness(bestSolution.fitness);
+                        if (enableTabu) addToTabuList(trial);
                     }
                 } else {
                     newPopulation.add(target);
@@ -100,40 +125,63 @@ public class DifferentialEvolution {
 
             updateAdaptiveParameters();
             population = newPopulation;
-            updateConvergenceChart(gen, solver.bestFitness);
+            updateConvergenceChart(gen, solver.getBestFitness());
 
-            if (gen % 30 == 0) {
+            if (enableLNS && gen % 30 == 0) {
                 Solution improved = new Solution(bestSolution);
                 lnsLocalSearch(improved);
                 evaluateSolution(improved);
-                if (improved.fitness < bestSolution.fitness && !isTabu(improved)) {
+                if (improved.fitness < bestSolution.fitness && (!enableTabu || !isTabu(improved))) {
                     log("[LNS-BEST] Improved best fitness: " +
                             String.format("%.2f → %.2f", bestSolution.fitness, improved.fitness));
                     bestSolution = improved;
-                    addToTabuList(improved);
+                    if (enableTabu) addToTabuList(improved);
                 }
             }
 
             if (gen % 5 == 0) {
-                final int genCopy = gen;
-                final Solution clone = new Solution(bestSolution);
-                Platform.runLater(() -> solver.animateSolution(clone, genCopy));
+                try {
+                    final int genCopy = gen;
+                    final Solution clone = new Solution(bestSolution);
+                    Platform.runLater(() -> solver.animateSolution(clone, genCopy));
+                } catch (IllegalStateException e) {
+                    // JavaFX toolkit not initialized (headless mode) - skip animation
+                }
             }
 
-            log("Gen " + gen + ": Best = " + String.format("%.2f", solver.bestFitness)
-                    + " | PenaltyWeight = " + String.format("%.2f", currentPenaltyWeight)
-                    + " | F = " + String.format("%.3f", F)
-                    + " | CR = " + String.format("%.3f", CR));
+            if (gen % 20 == 0) {
+                log("Gen " + gen + ": Best = " + String.format("%.2f", solver.getBestFitness())
+                        + " | PenaltyWeight = " + String.format("%.2f", currentPenaltyWeight)
+                        + " | F = " + String.format("%.3f", F)
+                        + " | CR = " + String.format("%.3f", CR));
+            }
         }
 
         log(String.format("[LNS] Improvements: %d/%d (%.2f%%)",
                 lnsImprovements, lnsAttempts,
                 (100.0 * lnsImprovements / Math.max(1, lnsAttempts))));
 
-        SolutionMetrics.saveRunToCSV(bestSolution, "DE+LNS+Tabu+Adaptive",
-                populationSize, maxGenerations, F, CR);
+        SolutionMetrics.saveRunToCSV(bestSolution, algorithmLabel(),
+                populationSize, maxGenerations, F, CR, solver.getCurrentDatasetName());
 
         return bestSolution;
+    }
+
+    /**
+     * Builds a label reflecting which mechanisms actually ran, e.g. "DE",
+     * "DE+LNS", "DE+Tabu+Adaptive", "DE+LNS+Tabu+Adaptive". Previously the label
+     * "DE+LNS+Tabu+Adaptive" was hardcoded here regardless of which mechanisms
+     * were actually active, which combined with MDVRPTWSolver separately saving
+     * the identical result as "DifferentialEvolution" meant Table 1's paired rows
+     * were the same run saved twice under two names, not two independently
+     * executed algorithms.
+     */
+    private String algorithmLabel() {
+        StringBuilder sb = new StringBuilder("DE");
+        if (enableLNS) sb.append("+LNS");
+        if (enableTabu) sb.append("+Tabu");
+        if (enableAdaptivePenalty) sb.append("+Adaptive");
+        return sb.toString();
     }
 
     private void addToTabuList(Solution sol) {
@@ -160,7 +208,7 @@ public class DifferentialEvolution {
         else if (ratio > targetFeasibilityRatio)
             currentPenaltyWeight = Math.max(currentPenaltyWeight * penaltyDecreaseFactor, minPenaltyWeight);
 
-        solver.penaltyWeight = currentPenaltyWeight;
+        solver.setPenaltyWeight(currentPenaltyWeight);
     }
 
     private double adaptParameter(double base, double min, double max) {
@@ -230,32 +278,75 @@ public class DifferentialEvolution {
         while (toRemove.size() < numRemove)
             toRemove.add(rand.nextInt(n));
 
-        List<Integer> remaining = new ArrayList<>();
+        List<Route> currentRoutes = solver.decodeSolution(sol);
+        Map<Depot, Double> depotDistance = new HashMap<>();
+        Map<Depot, Integer> depotViolations = new HashMap<>();
+        for (Route r : currentRoutes) {
+            depotDistance.merge(r.depot, r.distance, Double::sum);
+            depotViolations.merge(r.depot, r.timeWindowViolations, Integer::sum);
+        }
+
         List<Integer> removed = new ArrayList<>();
-        for (int idx : sol.chromosome) {
-            if (toRemove.contains(idx)) removed.add(idx);
-            else remaining.add(idx);
+        Map<Depot, List<Integer>> remainingByDepot = new HashMap<>();
+        for (int gene : sol.chromosome) {
+            if (toRemove.contains(gene)) {
+                removed.add(gene);
+            } else {
+                Customer c = solver.getCustomers().get(gene);
+                Depot d = solver.getDepots().get(c.assignedDepotId - 1);
+                remainingByDepot.computeIfAbsent(d, k -> new ArrayList<>()).add(gene);
+            }
         }
 
         while (!removed.isEmpty()) {
             int cust = removed.remove(rand.nextInt(removed.size()));
+            Customer custObj = solver.getCustomers().get(cust);
+            Depot depot = solver.getDepots().get(custObj.assignedDepotId - 1);
+            List<Integer> depotList = remainingByDepot.computeIfAbsent(depot, k -> new ArrayList<>());
+
+            double otherDepotsDistance = 0;
+            int otherDepotsViolations = 0;
+            for (Map.Entry<Depot, Double> e : depotDistance.entrySet())
+                if (e.getKey() != depot) otherDepotsDistance += e.getValue();
+            for (Map.Entry<Depot, Integer> e : depotViolations.entrySet())
+                if (e.getKey() != depot) otherDepotsViolations += e.getValue();
+
             int bestPos = 0;
             double bestFitness = Double.POSITIVE_INFINITY;
-            for (int i = 0; i <= remaining.size(); i++) {
-                List<Integer> temp = new ArrayList<>(remaining);
-                temp.add(i, cust);
-                Solution tempSol = new Solution(temp.stream().mapToInt(x -> x).toArray());
-                evaluateSolution(tempSol);
-                if (tempSol.fitness < bestFitness) {
-                    bestFitness = tempSol.fitness;
+            double bestDepotDistance = 0;
+            int bestDepotViolations = 0;
+
+            for (int i = 0; i <= depotList.size(); i++) {
+                List<Integer> tempGenes = new ArrayList<>(depotList);
+                tempGenes.add(i, cust);
+                List<Customer> tempCustomers = new ArrayList<>(tempGenes.size());
+                for (int g : tempGenes) tempCustomers.add(solver.getCustomers().get(g));
+
+                double[] result = solver.evaluateDepotOnly(depot, tempCustomers);
+                double candidateFitness = (otherDepotsDistance + result[0])
+                        + currentPenaltyWeight * (otherDepotsViolations + result[1]);
+
+                if (candidateFitness < bestFitness) {
+                    bestFitness = candidateFitness;
                     bestPos = i;
+                    bestDepotDistance = result[0];
+                    bestDepotViolations = (int) result[1];
                 }
             }
-            remaining.add(bestPos, cust);
+
+            depotList.add(bestPos, cust);
+            depotDistance.put(depot, bestDepotDistance);
+            depotViolations.put(depot, bestDepotViolations);
         }
 
-        sol.chromosome = remaining.stream().mapToInt(i -> i).toArray();
-        evaluateSolution(sol);
+        int[] newChromosome = new int[n];
+        int idx = 0;
+        for (List<Integer> list : remainingByDepot.values())
+            for (int gene : list)
+                newChromosome[idx++] = gene;
+
+        sol.chromosome = newChromosome;
+        evaluateSolution(sol); // one authoritative full decode for final fitness
 
         if (sol.fitness < before) {
             lnsImprovements++;
@@ -281,7 +372,7 @@ public class DifferentialEvolution {
 
     private int[] generateRandomPermutation() {
         List<Integer> perm = new ArrayList<>();
-        for (int i = 0; i < solver.customers.size(); i++) perm.add(i);
+        for (int i = 0; i < solver.getCustomers().size(); i++) perm.add(i);
         Collections.shuffle(perm, rand);
         return perm.stream().mapToInt(i -> i).toArray();
     }
@@ -295,21 +386,16 @@ public class DifferentialEvolution {
 
     private void updateConvergenceChart(int gen, double fitness) {
         if (convergenceSeries != null) {
-            Platform.runLater(() -> convergenceSeries.getData().add(new XYChart.Data<>(gen, fitness)));
+            try {
+                Platform.runLater(() -> convergenceSeries.getData().add(new XYChart.Data<>(gen, fitness)));
+            } catch (IllegalStateException e) {
+                // JavaFX toolkit not initialized (headless mode) - skip
+            }
         }
     }
 
     public void evaluateSolution(Solution sol) {
-        sol.routes = solver.decodeSolution(sol);
-        sol.totalDistance = 0;
-        sol.totalPenalty = 0;
-        sol.timeWindowViolations = 0;
-        for (Route r : sol.routes) {
-            sol.totalDistance += r.distance;
-            sol.totalPenalty += r.penalty;
-            sol.timeWindowViolations += r.timeWindowViolations;
-        }
-        sol.fitness = sol.totalDistance + currentPenaltyWeight * sol.totalPenalty;
+        solver.evaluateSolution(sol);
     }
 
     private boolean shouldAccept(Solution trial, Solution target) {

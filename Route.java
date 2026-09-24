@@ -24,7 +24,10 @@ public class Route {
 
     public Route(Depot depot) {
         this.depot = depot;
-        this.color = PRESET_COLORS.get((PRESET_COLORS.size() + depot.name.hashCode()) % PRESET_COLORS.size());
+        // Math.floorMod (not %) is required here: String.hashCode() can be a large
+        // negative number whose magnitude exceeds PRESET_COLORS.size(), and plain
+        // % keeps the sign of the dividend, which can still produce a negative index.
+        this.color = PRESET_COLORS.get(Math.floorMod(depot.name.hashCode(), PRESET_COLORS.size()));
     }
 
     public void addCustomer(Customer customer) {
@@ -128,8 +131,41 @@ public class Route {
         return distance;
     }
 
+	/**
+	 * Recomputes arrival times, time-window penalty, and violation count for the
+	 * route's customers in their CURRENT order. Must be called after any operation
+	 * that reorders customers (e.g. 2-opt) since those operations invalidate the
+	 * arrival times that were computed incrementally by addCustomer().
+	 *
+	 * Previously this was a no-op stub, which meant any route decoded through a
+	 * path that relies on it (e.g. Decoder.decode()) silently reported zero time
+	 * window violations regardless of the actual schedule.
+	 */
 	public void evaluateTimeWindows() {
-		// TODO Auto-generated method stub
-		
+		penalty = 0;
+		timeWindowViolations = 0;
+		waitTime = 0;
+
+		if (customers.isEmpty()) return;
+
+		double currentTime = 0.0;
+		Customer prev = null;
+
+		for (Customer customer : customers) {
+			double travelTime = (prev == null) ? depot.distanceTo(customer) : prev.distanceTo(customer);
+			currentTime += travelTime;
+
+			if (currentTime < customer.readyTime) {
+				waitTime += customer.readyTime - currentTime;
+				currentTime = customer.readyTime;
+			} else if (currentTime > customer.dueTime) {
+				timeWindowViolations++;
+				penalty += currentTime - customer.dueTime;
+			}
+
+			customer.arrivalTime = currentTime;
+			currentTime += customer.serviceTime;
+			prev = customer;
+		}
 	}
 }

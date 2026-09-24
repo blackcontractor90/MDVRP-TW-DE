@@ -38,6 +38,9 @@ public class MetricsAnalyzer {
                 logger.accept(" Invalid or missing CSV header.");
                 return;
             }
+            // Column layout: Dataset,Algorithm,PopulationSize,Generations,F,CR,
+            //                Fitness,Distance,Penalty,TWViolations,Feasible,Timestamp
+            final int FITNESS_COL = 6, DISTANCE_COL = 7, PENALTY_COL = 8, FEASIBLE_COL = 10;
 
             List<Double> fitnessValues = new ArrayList<>();
             List<Double> distances = new ArrayList<>();
@@ -48,13 +51,13 @@ public class MetricsAnalyzer {
             String line;
             while ((line = reader.readLine()) != null) {
                 String[] tokens = line.split(",");
-                if (tokens.length < 11) continue;
+                if (tokens.length < 12) continue;
 
                 try {
-                    double fitness = Double.parseDouble(tokens[5]);
-                    double distance = Double.parseDouble(tokens[6]);
-                    double penalty = Double.parseDouble(tokens[7]);
-                    boolean feasible = Boolean.parseBoolean(tokens[9]);
+                    double fitness = Double.parseDouble(tokens[FITNESS_COL]);
+                    double distance = Double.parseDouble(tokens[DISTANCE_COL]);
+                    double penalty = Double.parseDouble(tokens[PENALTY_COL]);
+                    boolean feasible = Boolean.parseBoolean(tokens[FEASIBLE_COL]);
 
                     fitnessValues.add(fitness);
                     distances.add(distance);

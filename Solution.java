@@ -41,9 +41,18 @@ public class Solution {
                 rClone.timeWindowViolations = r.timeWindowViolations;
                 rClone.totalLoad = r.totalLoad;
                 rClone.totalDistance = r.totalDistance;
-                rClone.customers = (r.customers != null)
-                        ? new ArrayList<>(r.customers)
-                        : new ArrayList<>();
+                // Deep-copy each Customer rather than just copying the List reference.
+                // Without this, cloned routes across different Solution instances
+                // shared the same underlying Customer objects, so writes to mutable
+                // fields (arrivalTime, assignedDepotId) by one solution's evaluation
+                // could silently corrupt state a different "independent" clone was
+                // relying on.
+                rClone.customers = new ArrayList<>();
+                if (r.customers != null) {
+                    for (Customer c : r.customers) {
+                        rClone.customers.add(new Customer(c));
+                    }
+                }
                 this.routes.add(rClone);
             }
         }

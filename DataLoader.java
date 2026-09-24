@@ -36,7 +36,16 @@ public class DataLoader {
             int serviceTime = Integer.parseInt(tokens[6]);
 
             if (demand == 0) {
-                depots.add(new Depot(id, x, y, readyTime, dueDate));
+                // Bug fix: this used to pass the depot row's readyTime/dueDate
+                // positionally into Depot's (vehicleCapacity, maxVehicles) params,
+                // which for a typical Solomon/Cordeau depot row means capacity=0
+                // (readyTime is usually 0) and maxVehicles=huge (dueDate is usually
+                // the planning horizon). A capacity of 0 makes every route
+                // infeasible for any customer with positive demand - i.e. this
+                // silently broke routing for any dataset loaded through this path.
+                // Depot capacity/fleet size come from the file's first line, already
+                // parsed into vehicleCapacity/numberOfVehicles above.
+                depots.add(new Depot(id, x, y, vehicleCapacity, numberOfVehicles));
             } else {
                 customers.add(new Customer(id, x, y, demand, readyTime, dueDate, serviceTime));
             }

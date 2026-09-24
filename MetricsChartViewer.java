@@ -42,17 +42,22 @@ public class MetricsChartViewer {
                 String header = reader.readLine(); // skip header
                 String line;
                 int runIndex = 1;
+                // Column layout: Dataset,Algorithm,PopulationSize,Generations,F,CR,
+                //                Fitness,Distance,Penalty,TWViolations,Feasible,Timestamp
+                final int DATASET_COL = 0, FITNESS_COL = 6, DISTANCE_COL = 7,
+                          PENALTY_COL = 8, FEASIBLE_COL = 10, TIMESTAMP_COL = 11;
                 while ((line = reader.readLine()) != null) {
                     String[] tokens = line.split(",");
-                    if (tokens.length < 11) continue;
+                    if (tokens.length < 12) continue;
 
-                    double fit = Double.parseDouble(tokens[5]);
-                    double dist = Double.parseDouble(tokens[6]);
-                    double pen = Double.parseDouble(tokens[7]);
-                    boolean feas = Boolean.parseBoolean(tokens[9]);
-                    String timestamp = tokens[10];
+                    String dataset = tokens[DATASET_COL];
+                    double fit = Double.parseDouble(tokens[FITNESS_COL]);
+                    double dist = Double.parseDouble(tokens[DISTANCE_COL]);
+                    double pen = Double.parseDouble(tokens[PENALTY_COL]);
+                    boolean feas = Boolean.parseBoolean(tokens[FEASIBLE_COL]);
+                    String timestamp = tokens[TIMESTAMP_COL];
 
-                    runLabels.add("Run " + runIndex);
+                    runLabels.add(dataset + " (Run " + runIndex + ")");
                     fitness.add(fit);
                     distance.add(dist);
                     penalty.add(pen);
