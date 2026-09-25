@@ -20,6 +20,7 @@ Four configurations were compared (see manuscript for full methodology and insta
 | `DE+LNS+Tabu` | + both | [TODO: effect] |
 | `DE+LNS+Tabu+Adaptive` | + adaptive time-window penalty | **Consistently worsens results relative to `DE+LNS+Tabu`** |
 
+
 **Table 1.** Mean Route Distance ± SD (Best–Worst) Across 30 Repetitions
 
 | Instance | Config | Mean | ± SD | Min | Max |
