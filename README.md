@@ -2,52 +2,23 @@
 
 A JavaFX/Java application implementing a Hybrid Adaptive Differential Evolution algorithm for the **Multi-Depot Vehicle Routing Problem with Time Windows (MDVRPTW)**, extended with Large Neighborhood Search (LNS) reinsertion, Tabu memory, an adaptive time-window penalty, and route-relocation local search.
 
-This repository accompanies the manuscript [TODO: exact current title], submitted to the *Malaysian Journal of Science and Advanced Technology (MJSAT)* and currently under revision (previously submitted to the *Malaysian Journal of Computing*, retracted and resubmitted).
+This repository accompanies a manuscript restructured as a **controlled ablation study across four Differential Evolution variants**, submitted to the *Malaysian Journal of Science and Advanced Technology (MJSAT)* and currently under revision (previously submitted to the *Malaysian Journal of Computing*, retracted and resubmitted).
 
-The manuscript restructures this work as a **controlled ablation study across four DE variants**, isolating the contribution of each component. The headline finding: **LNS drives most of the performance gain, while the adaptive penalty mechanism consistently makes results worse.** This is reported as an intentional negative result, not a limitation to be downplayed, see [Ablation Results](#ablation-results) below.
+The headline finding: **LNS drives most of the performance gain, while the adaptive penalty mechanism consistently makes results worse.** This is reported as an intentional negative result, not a limitation to be downplayed, see [Ablation Results](#ablation-results) below.
 
 ---
 
 ## Ablation Results
 
-Four configurations were compared (see manuscript for full methodology and instance set):
+Five configurations are supported by the headless harness, isolating the contribution of each component:
 
-| Configuration | What it adds | Effect on solution quality |
-|---|---|---|
-| `DE` | Baseline Differential Evolution only | Reference |
-| `DE+LNS` | + Large Neighborhood Search reinsertion | **Primary driver of improvement** |
-| `DE+Tabu` | + Tabu memory | [TODO: effect, e.g. marginal / neutral] |
-| `DE+LNS+Tabu` | + both | [TODO: effect] |
-| `DE+LNS+Tabu+Adaptive` | + adaptive time-window penalty | **Consistently worsens results relative to `DE+LNS+Tabu`** |
+- `DE` — baseline Differential Evolution only
+- `DE+LNS` — adds Large Neighborhood Search reinsertion
+- `DE+Tabu` — adds Tabu memory
+- `DE+LNS+Tabu` — adds both
+- `DE+LNS+Tabu+Adaptive` — adds an adaptive time-window penalty on top of all of the above
 
-
-**Table 1.** Mean Route Distance ± SD (Best–Worst) Across 30 Repetitions
-
-| Instance | Config | Mean | ± SD | Min | Max |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **pr11a** | DE | 23477.5 | 579.9 | 22705.0 | 25427.9 |
-| | DE+LNS | 14991.5 | 307.5 | 14378.6 | 15568.5 |
-| | DE+Tabu | 23441.7 | 497.9 | 22689.9 | 24339.3 |
-| | DE+LNS+Tabu | 14865.5 | 470.2 | 13872.3 | 15591.2 |
-| | +Adaptive | 17814.7 | 757.5 | 15825.1 | 19747.4 |
-| **pr11b** | DE | 23436.8 | 568.8 | 21823.0 | 24550.0 |
-| | DE+LNS | 12929.8 | 500.9 | 12054.9 | 13963.3 |
-| | DE+Tabu | 23470.2 | 579.9 | 22014.7 | 24588.4 |
-| | DE+LNS+Tabu | 13159.9 | 374.5 | 12387.1 | 13763.7 |
-| | +Adaptive | 15761.4 | 679.4 | 14311.6 | 17192.6 |
-| **pr12a** | DE | 31651.1 | 669.5 | 30280.4 | 32905.2 |
-| | DE+LNS | 20556.1 | 479.5 | 19399.0 | 21311.8 |
-| | DE+Tabu | 31645.9 | 597.0 | 30459.1 | 33161.3 |
-| | DE+LNS+Tabu | 20745.9 | 565.7 | 19587.5 | 21702.8 |
-| | +Adaptive | 25795.7 | 911.0 | 23885.9 | 27569.0 |
-| **pr12b** | DE | 31419.7 | 679.0 | 30026.1 | 32805.8 |
-| | DE+LNS | 18585.3 | 434.7 | 17443.8 | 19245.3 |
-| | DE+Tabu | 31327.6 | 649.6 | 30463.7 | 32901.1 |
-| | DE+LNS+Tabu | 18636.5 | 515.4 | 17418.5 | 19564.1 |
-| | +Adaptive | 23477.8 | 1122.2 | 20817.4 | 25965.0 |
-
-
-
+Across these configurations, LNS reinsertion is the primary driver of solution-quality improvement, while adding the adaptive time-window penalty consistently makes results worse rather than better. Full per-configuration results, the instance set, and statistical treatment are reported in the manuscript.
 
 **Practical implication:** if you are using this code for your own routing experiments, `DE+LNS+Tabu` (without the adaptive penalty) is the configuration this study found most effective, not the full `DE+LNS+Tabu+Adaptive` combination its name might suggest is "most complete."
 
@@ -77,7 +48,7 @@ Four configurations were compared (see manuscript for full methodology and insta
 
 ### Headless Mode
 - `HeadlessHarness` — run large batches of experiments without the GUI
-- Supports the five ablation configurations listed above via a single flag/config each
+- Supports the five ablation configurations listed above
 - Reproducible seeding
 - Automatic CSV output of individual runs + summary statistics
 
@@ -109,7 +80,7 @@ All source files are in the root directory:
 
 ## How to Run
 
-### 1. GUI Mode (recommended for exploration)
+### GUI Mode (recommended for exploration)
 
 **Using an IDE (IntelliJ / Eclipse / NetBeans):**
 1. Import the project.
@@ -126,38 +97,23 @@ javac --module-path $JAVAFX_LIB --add-modules javafx.controls,javafx.fxml -d out
 java --module-path $JAVAFX_LIB --add-modules javafx.controls,javafx.fxml -cp out MDVRPTWSolver
 ```
 
-### 2. Headless Mode (reproducing the manuscript's results)
+### Headless Mode (batch experiments)
 
-```bash
-javac --module-path $JAVAFX_LIB --add-modules javafx.controls,javafx.fxml -d out *.java
-
-java --module-path $JAVAFX_LIB --add-modules javafx.controls,javafx.fxml -cp out HeadlessHarness 
-```
-
-
----
-
-## Dataset Format
-
-Cordeau-style, same format as the AGTSP/hybridmemetic repos
+Compile as above, then run `HeadlessHarness` in place of `MDVRPTWSolver`. See `HeadlessHarness.java` and `HeadlessSolverContext.java` for the available configuration options (ablation variant selection, dataset path, seeding, and output location).
 
 ---
 
 ## Citation
 
-If you use this code, please cite the manuscript:
+This work is currently under revision at the *Malaysian Journal of Science and Advanced Technology (MJSAT)*. A full citation, including volume, issue, and DOI, will be added here once the manuscript is accepted.
 
-Morsidi, F. An Ablation Study of Constraint-Handling Mechanisms in Differential Evolution for Multi-Depot Vehicle Routing with Time Windows. *Malaysian Journal of Science and Advanced Technology (MJSAT)* (under revision).
-
-
-A citable, versioned archive of this repository [TODO: will be / is] available via Zenodo:
-https://doi.org/10.5281/zenodo.22933165
+A citable, versioned archive of this repository will be made available via Zenodo upon acceptance.
 
 ---
 
 ## License
 
-MIT
+MIT License.
 
 ---
 
