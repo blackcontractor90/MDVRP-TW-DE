@@ -133,7 +133,6 @@ If you use this code, please cite:
   title   = {An Ablation Study of Constraint-Handling Mechanisms in Differential Evolution for Multi-Depot Vehicle Routing with Time Windows},
   journal = {Malaysian Journal of Science and Advanced Technology},
   year    = {2026},
-  doi     = {10.56532/mjsat.v3i3.163}
 }
 ```
 
