@@ -4,7 +4,7 @@ A JavaFX/Java solver for the **Multi-Depot Vehicle Routing Problem with Time Win
 
 This repository accompanies the accepted manuscript:
 
-> Morsidi, F. (2026). An Ablation Study of Constraint-Handling Mechanisms in Differential Evolution for Multi-Depot Vehicle Routing with Time Windows. *Malaysian Journal of Science and Advanced Technology*. https://doi.org/10.56532/mjsat.v3i3.163
+> Morsidi, F. (2026). An Ablation Study of Constraint-Handling Mechanisms in Differential Evolution for Multi-Depot Vehicle Routing with Time Windows. *Malaysian Journal of Science and Advanced Technology*. 
 
 **Headline finding:** Large Neighborhood Search is the dominant contributor to cost reduction (35–45% lower mean route distance than baseline DE). Tabu memory contributes little on its own. The adaptive penalty mechanism, the component this study originally hypothesized would help, **substantially worsens both route cost and time-window feasibility** when layered on top of LNS and Tabu. This is reported as an intentional negative result: isolating each mechanism's individual contribution, rather than reporting only a single bundled hybrid, is the paper's main methodological point.
 
